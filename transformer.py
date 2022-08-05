@@ -32,6 +32,18 @@ class PositionalEncoding():
         
         return pe
 
+# Encoder
+class Encoder(nn.Module):
+    def __init__(self, encoder_layer, num_layer):
+        super(Encoder, self).__init__()
+        self.layers = [encoder_layer for _ in range(num_layer)]   
+        
+    def forward(self, x, mask):
+        for layer in self.layers:
+            x = layer(x, mask)
+            
+        return x
+
 # Encoder layer
 class EncoderLayer(nn.Module):
     def __init__(self, d_model=512, num_heads=8, d_ff=2048):
@@ -51,37 +63,6 @@ class EncoderLayer(nn.Module):
         out = self.layer_norm(out)
         
         return out
-
-# Encoder
-class Encoder(nn.Module):
-    def __init__(self, encoder_layer, num_layer):
-        super(Encoder, self).__init__()
-        self.layers = [encoder_layer for _ in range(num_layer)]   
-        
-    def forward(self, x, mask):
-        for layer in self.layers:
-            x = layer(x, mask)
-            
-        return x
-    
-# Query, key, and value size: (batch, num_heads, seq_len, d_k)
-# Mask size(optional): (batch, 1, seq_len, seq_len)   
-def scaled_dot_product_attention(query, key, value, mask):
-    # Get the q matmul k_t
-    # (batch, h, seq_len, d_k) -> (batch, h, seq_len, seq_len)
-    attention_score = torch.mm(query, torch.transpose(key, -2, -1))
-    
-    # Get the attention wights
-    d_k = query.size(-1)
-    attention_score = attention_score / math.sqrt(d_k)
-    attention_score += (mask * -1e9) if mask is not None else 0
-    attention_weights = F.softmax(attention_score, dim=-1, dtype=torch.float)
-     
-    # Get the attention value
-    # (batch, h, seq_len, seq_len) -> (batch, h, seq_len, d_k)
-    attention_value = torch.mm(attention_weights, value)
-    
-    return attention_value
 
 # Multi head attention
 class MultiHeadAttention(nn.Module):
@@ -144,6 +125,37 @@ class PositionWiseFeedForward(nn.Module):
         out = self.fc2(out)
         
         return out
+    
+# Query, key, and value size: (batch, num_heads, seq_len, d_k)
+# Mask size(optional): (batch, 1, seq_len, seq_len)   
+def scaled_dot_product_attention(query, key, value, mask):
+    # Get the q matmul k_t
+    # (batch, h, seq_len, d_k) -> (batch, h, seq_len, seq_len)
+    attention_score = torch.mm(query, torch.transpose(key, -2, -1))
+    
+    # Get the attention wights
+    d_k = query.size(-1)
+    attention_score = attention_score / math.sqrt(d_k)
+    attention_score += (mask * -1e9) if mask is not None else 0
+    attention_weights = F.softmax(attention_score, dim=-1, dtype=torch.float)
+     
+    # Get the attention value
+    # (batch, h, seq_len, seq_len) -> (batch, h, seq_len, d_k)
+    attention_value = torch.mm(attention_weights, value)
+    
+    return attention_value
+
+def look_ahead_mask(size_pad):
+    mask = torch.ones(size_pad, size_pad)
+    mask = torch.triu(mask, diagonal=1)
+    mask = mask.unsqueeze(0)
+    print(mask.shape)
+    return mask
+
+def padding_mask():
+    return 0
+
+print(look_ahead_mask(5))
 
 # t = timeit.Timer(lambda: scaled_dot_product_attention(temp_q, temp_k, temp_v, None)) 
 # print (t.timeit(10000))
