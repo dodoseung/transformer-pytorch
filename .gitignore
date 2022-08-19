@@ -1,0 +1,3 @@
+reference
+*.ipynb
+__pycache__
