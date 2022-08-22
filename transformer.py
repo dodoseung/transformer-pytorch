@@ -14,18 +14,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class Transformer(nn.Module):
     def __init__(self, num_encoder_layer=6, num_decoder_layer=6,
                  d_model=512, num_heads=8, d_ff=2048, dropout_rate=0.1,
-                 vocab_size=10000):
+                max_seq_len=100, vocab_size=10000):
         super(Transformer, self).__init__()
-        # Embedding
-        self.src_embedding = TransformerEmbedding(d_model, vocab_size)
-        self.trg_embedding = TransformerEmbedding(d_model, vocab_size)
-        
-        # Layers
-        decoder_layer = DecoderLayer(d_model, num_heads, d_ff)
-        
+
         # Encoder and decoder
-        self.encoder = Encoder(num_encoder_layer, d_model, num_heads, d_ff, dropout_rate)
-        self.decoder = Decoder(decoder_layer, num_decoder_layer)
+        self.encoder = Encoder(num_encoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len)
+        self.decoder = Decoder(num_encoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len)
         
         # Output layer
         self.out_layer = nn.Linear(d_model, vocab_size)
@@ -65,9 +59,9 @@ class Encoder(nn.Module):
         
         # Encoder layers
         for layer in self.layers:
-            x = layer(src, src_mask)
+            out = layer(src, src_mask)
             
-        return x
+        return out
 
 # Encoder layer
 class EncoderLayer(nn.Module):
@@ -75,59 +69,75 @@ class EncoderLayer(nn.Module):
         super(EncoderLayer, self).__init__()
         self.multi_head_attention = MultiHeadAttention(d_model=d_model, num_heads=num_heads)
         self.position_wise_feed_forward = PositionWiseFeedForward(d_model=d_model, d_ff=d_ff)
+        
         self.dropout = nn.Dropout(p=dropout_ratio)
-        self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+        self.layer_norm1 = nn.LayerNorm(d_model, eps=1e-6)
+        self.layer_norm2 = nn.LayerNorm(d_model, eps=1e-6)
 
     def forward(self, src, src_mask):
         # Multi head attention
-        out1 = self.multi_head_attention(src, src, src, src_mask)
-        out1 = self.dropout(out1)
-        out1 = self.layer_norm(src + out1)
+        out = self.multi_head_attention(src, src, src, src_mask)
+        out = self.dropout(out)
+        out = self.layer_norm1(src + out)
+        residual = out
         
         # Position wise feed foward
-        out2 = self.position_wise_feed_forward(out1)
-        out2 = self.dropout(out2)
-        out = self.layer_norm(out1 + out2)
+        out = self.position_wise_feed_forward(out)
+        out = self.dropout(out)
+        out = self.layer_norm2(residual + out)
         
         return out
 
 # Decoder
 class Decoder(nn.Module):
-    def __init__(self, decoder_layer, num_layer):
+    def __init__(self, num_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len):
         super(Decoder, self).__init__()
-        self.layers = [decoder_layer for _ in range(num_layer)]   
+        # Embedding
+        self.trg_embedding = TransformerEmbedding(d_model, max_seq_len)
         
-    def forward(self, x, mask):
+        # Decoder layers
+        self.layers = nn.ModuleList([DecoderLayer(d_model, num_heads, d_ff, dropout_rate) for _ in range(num_layer)]) 
+        
+    def forward(self, trg, trg_mask, encoder_src, src_mask):
+        # Embedding
+        trg = self.trg_embedding(trg)
+        
+        # Encoder layers
         for layer in self.layers:
-            x = layer(x, mask)
+            out = layer(trg, trg_mask, encoder_src, src_mask)
             
-        return x
+        return out
 
 # Decoder layer
 class DecoderLayer(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff):
+    def __init__(self, d_model, num_heads, d_ff, dropout_rate):
         super(DecoderLayer, self).__init__()
         self.masked_multi_head_attention = MultiHeadAttention(d_model=d_model, num_heads=num_heads)
         self.multi_head_attention = MultiHeadAttention(d_model=d_model, num_heads=num_heads)
         self.position_wise_feed_forward = PositionWiseFeedForward(d_model=d_model, d_ff=d_ff)
-        self.dropout = nn.Dropout(p=0.1)
-        self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+        
+        self.dropout = nn.Dropout(p=dropout_rate)
+        self.layer_norm1 = nn.LayerNorm(d_model, eps=1e-6)
+        self.layer_norm2 = nn.LayerNorm(d_model, eps=1e-6)
+        self.layer_norm3 = nn.LayerNorm(d_model, eps=1e-6)
 
-    def forward(self, x, mask, encoder_out, encoder_mask):
+    def forward(self, trg, trg_mask, encoder_src, src_mask):
         # Masked multi head attention
-        out = self.masked_multi_head_attention(x, x, x, mask)
+        out = self.masked_multi_head_attention(trg, trg, trg, trg_mask)
         out = self.dropout(out)
-        out = self.layer_norm(x + out)
+        out = self.layer_norm1(trg + out)
+        residual = out
         
         # Multi head attention
-        out = self.multi_head_attention(out, encoder_out, encoder_out, encoder_mask)
+        out = self.multi_head_attention(out, encoder_src, encoder_src, src_mask)
         out = self.dropout(out)
-        out = self.layer_norm(x + out)
+        out = self.layer_norm2(residual + out)
+        residual = out
         
         # Position wise feed foward
-        out = self.position_wise_feed_forward(x)
+        out = self.position_wise_feed_forward(out)
         out = self.dropout(out)
-        out = self.layer_norm(x + out)
+        out = self.layer_norm3(residual + out)
         
         return out
 
