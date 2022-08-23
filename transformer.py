@@ -13,25 +13,24 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Transformer
 class Transformer(nn.Module):
     def __init__(self, num_encoder_layer=6, num_decoder_layer=6,
-                 d_model=512, num_heads=8, d_ff=2048, dropout_rate=0.1,
-                max_seq_len=100, vocab_size=10000):
+                 d_model=512, num_heads=8, d_ff=2048, dropout_rate=0.1, 
+                 src_pad=0, trg_pad=0, max_seq_len=100, vocab_size=10000):
         super(Transformer, self).__init__()
-
+        # Token masks
+        self.src_pad = src_pad
+        self.trg_pad = trg_pad
+        
         # Encoder and decoder
-        self.encoder = Encoder(num_encoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len)
-        self.decoder = Decoder(num_encoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len)
+        self.encoder = Encoder(num_encoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size)
+        self.decoder = Decoder(num_decoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size)
         
         # Output layer
         self.out_layer = nn.Linear(d_model, vocab_size)
     
     def forward(self, src, trg):
-        # Embedding
-        src = self.src_embedding(src)
-        trg = self.trg_embedding(trg)
-        
-        # Mask
-        src_mask = padding_mask(src)
-        trg_mask = look_ahead_mask(trg)
+        # Get masks
+        src_mask = padding_mask(src, self.src_pad)
+        trg_mask = look_ahead_mask(trg, self.trg_pad)
         
         # Encoder and decoder
         encoder_out = self.encoder(src, src_mask)
@@ -45,21 +44,23 @@ class Transformer(nn.Module):
 
 # Encoder
 class Encoder(nn.Module):
-    def __init__(self, num_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len):
+    def __init__(self, num_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size):
         super(Encoder, self).__init__()
         # Embedding
-        self.src_embedding = TransformerEmbedding(d_model, max_seq_len)
+        token_embedding = TokenEmbedding(d_model, vocab_size)
+        position_embedding = PositionalEncoding(d_model, max_seq_len)
+        self.src_embedding = nn.Sequential(token_embedding, position_embedding)
         
         # Encoder layers
         self.layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout_rate) for _ in range(num_layer)])
         
     def forward(self, src, src_mask):
         # Embedding
-        src = self.src_embedding(src)
+        emb_src = self.src_embedding(src)
         
         # Encoder layers
         for layer in self.layers:
-            out = layer(src, src_mask)
+            out = layer(emb_src, src_mask)
             
         return out
 
@@ -90,21 +91,23 @@ class EncoderLayer(nn.Module):
 
 # Decoder
 class Decoder(nn.Module):
-    def __init__(self, num_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len):
+    def __init__(self, num_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size):
         super(Decoder, self).__init__()
         # Embedding
-        self.trg_embedding = TransformerEmbedding(d_model, max_seq_len)
+        token_embedding = TokenEmbedding(d_model, vocab_size)
+        position_embedding = PositionalEncoding(d_model, max_seq_len)
+        self.trg_embedding = nn.Sequential(token_embedding, position_embedding)
         
         # Decoder layers
         self.layers = nn.ModuleList([DecoderLayer(d_model, num_heads, d_ff, dropout_rate) for _ in range(num_layer)]) 
         
     def forward(self, trg, trg_mask, encoder_src, src_mask):
         # Embedding
-        trg = self.trg_embedding(trg)
+        emb_trg = self.trg_embedding(trg)
         
         # Encoder layers
         for layer in self.layers:
-            out = layer(trg, trg_mask, encoder_src, src_mask)
+            out = layer(emb_trg, trg_mask, encoder_src, src_mask)
             
         return out
 
@@ -225,42 +228,35 @@ def scaled_dot_product_attention(query, key, value, mask):
     return attention_value
 
 # Set the look ahead mask
-# (1, size_pad, size_pad)
-def look_ahead_mask(seq):
-    size_pad = seq.size(-1)
-    mask = torch.ones(size_pad, size_pad)
-    mask = torch.triu(mask, diagonal=1)
-    
+# seq: (batch, seq_len)
+# mask: (batch, 1, seq_len, seq_len)
+# Pad -> 0
+def look_ahead_mask(seq, pad):
+    # Set the look ahead mask
+    # (batch, seq_len, seq_len)
+    seq_len = seq.shape[1]
+    mask = torch.ones(seq_len, seq_len)
+    mask = torch.tril(mask)
+
     # Set the padding mask
-    mask[:, seq[0,:]==0] = 1
-    mask = mask.unsqueeze(0)
+    # (batch, 1, 1, seq_len)
+    pad_mask = (seq != pad)
+    pad_mask = pad_mask.unsqueeze(1).unsqueeze(2)
+    
+    # Merge the masks
+    mask = mask & pad_mask
 
     return mask
 
 # Set the padding mask
-# (1, size_pad, size_pad)
-def padding_mask(seq):
-    size_pad = seq.size(-1)
-    mask = torch.zeros(size_pad, size_pad)
-    print(seq[0,:]==0)
-    mask[:, seq[0,:]==0] = 1
-    mask = mask.unsqueeze(0)
+# seq: (batch, seq_len)
+# mask: (batch, 1, 1, seq_len)
+# Pad -> 0
+def padding_mask(seq, pad):
+    mask = (seq != pad)
+    mask = mask.unsqueeze(1).unsqueeze(2)
     
     return mask
-
-# Embedding
-class TransformerEmbedding(nn.Module):
-    def __init__(self, d_model, vocab_size, max_seq_len=100):
-        super(TransformerEmbedding, self).__init__()
-        token_embedding = TokenEmbedding(d_model, vocab_size)
-        position_embedding = PositionalEncoding(d_model, max_seq_len)
-
-        # Embedding
-        self.embedding = nn.Sequential(token_embedding, position_embedding)
-    
-    def forward(self, x):
-        out = self.embedding(x)
-        return out
 
 # Token embedding
 class TokenEmbedding(nn.Module):
@@ -298,4 +294,4 @@ class PositionalEncoding(nn.Module):
         out = x + Variable(pos_enc, requires_grad=False).to(device)
         out = self.dropout(out)
         
-        return out
+        return out  

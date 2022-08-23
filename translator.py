@@ -22,9 +22,6 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 spacy_en = spacy.load('en') # English
 spacy_de = spacy.load('de') # Deutsch
 
-model = Transformer(num_encoder_layer=6, num_decoder_layer=6,
-                          d_model=512, num_heads=8, d_ff=2048, vocab_size=10000)
-
 SRC = Field(tokenize = 'spacy', tokenizer_language='en',
             init_token = '<sos>', pad_token = '<pad>', eos_token = '<eos>', unk_token = '<unk>',
             lower=True, batch_first=True) 
@@ -43,9 +40,14 @@ train_iterator, valid_iterator, test_iterator = BucketIterator.splits(
 
 SRC_PAD_IDX = SRC.vocab.stoi[SRC.pad_token]
 TRG_PAD_IDX = TRG.vocab.stoi[TRG.pad_token]
+print(SRC.pad_token)
+print(SRC_PAD_IDX)
+# Transformer
+model = Transformer(num_encoder_layer=6, num_decoder_layer=6,
+                          d_model=512, num_heads=8, d_ff=2048, vocab_size=10000)
 
 # Adam optimizer로 학습 최적화
-optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 # 뒷 부분의 패딩(padding)에 대해서는 값 무시
 criterion = nn.CrossEntropyLoss(ignore_index = TRG_PAD_IDX)
