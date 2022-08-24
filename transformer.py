@@ -14,23 +14,24 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class Transformer(nn.Module):
     def __init__(self, num_encoder_layer=6, num_decoder_layer=6,
                  d_model=512, num_heads=8, d_ff=2048, dropout_rate=0.1, 
-                 src_pad=0, trg_pad=0, max_seq_len=100, vocab_size=10000):
+                 src_pad_idx=0, trg_pad_idx=0, src_vocab_size=10000, trg_vocab_size=10000,
+                 max_seq_len=100):
         super(Transformer, self).__init__()
         # Token masks
-        self.src_pad = src_pad
-        self.trg_pad = trg_pad
+        self.src_pad_idx = src_pad_idx
+        self.trg_pad_idx = trg_pad_idx
         
         # Encoder and decoder
-        self.encoder = Encoder(num_encoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size)
-        self.decoder = Decoder(num_decoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size)
+        self.encoder = Encoder(num_encoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, src_vocab_size)
+        self.decoder = Decoder(num_decoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, trg_vocab_size)
         
         # Output layer
-        self.out_layer = nn.Linear(d_model, vocab_size)
+        self.out_layer = nn.Linear(d_model, trg_vocab_size)
     
     def forward(self, src, trg):
         # Get masks
-        src_mask = padding_mask(src, self.src_pad)
-        trg_mask = look_ahead_mask(trg, self.trg_pad)
+        src_mask = padding_mask(src, self.src_pad_idx)
+        trg_mask = look_ahead_mask(trg, self.trg_pad_idx)
         
         # Encoder and decoder
         encoder_out = self.encoder(src, src_mask)
@@ -211,7 +212,7 @@ def scaled_dot_product_attention(query, key, value, mask):
     # Get the q matmul k_t
     # (batch, h, query_len, d_k) dot (batch, h, d_k, key_len)
     # -> (batch, h, query_len, key_len)
-    attention_score = torch.mm(query, torch.transpose(key, -2, -1))
+    attention_score = torch.matmul(query, torch.transpose(key, -2, -1))
     
     # Get the attention score
     d_k = query.size(-1)
@@ -220,23 +221,24 @@ def scaled_dot_product_attention(query, key, value, mask):
     # Get the attention wights
     attention_score = attention_score.masked_fill(mask==0, -1e10) if mask is not None else attention_score
     attention_weights = F.softmax(attention_score, dim=-1, dtype=torch.float)
-     
+
     # Get the attention value
     # (batch, h, query_len, key_len) -> (batch, h, query_len, d_k)
-    attention_value = torch.mm(attention_weights, value)
+    attention_value = torch.matmul(attention_weights, value)
     
     return attention_value
 
 # Set the look ahead mask
 # seq: (batch, seq_len)
 # mask: (batch, 1, seq_len, seq_len)
-# Pad -> 0
+# Pad -> True
 def look_ahead_mask(seq, pad):
     # Set the look ahead mask
     # (batch, seq_len, seq_len)
     seq_len = seq.shape[1]
     mask = torch.ones(seq_len, seq_len)
     mask = torch.tril(mask)
+    mask = mask.bool()
 
     # Set the padding mask
     # (batch, 1, 1, seq_len)
@@ -251,7 +253,7 @@ def look_ahead_mask(seq, pad):
 # Set the padding mask
 # seq: (batch, seq_len)
 # mask: (batch, 1, 1, seq_len)
-# Pad -> 0
+# Pad -> True
 def padding_mask(seq, pad):
     mask = (seq != pad)
     mask = mask.unsqueeze(1).unsqueeze(2)
@@ -271,7 +273,7 @@ class TokenEmbedding(nn.Module):
 
 # Positional encoding
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model=512, max_seq_len=5000):
+    def __init__(self, d_model=512, max_seq_len=100):
         super(PositionalEncoding, self).__init__()
 
         # Get the radians

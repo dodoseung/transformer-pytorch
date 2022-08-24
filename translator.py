@@ -23,11 +23,13 @@ spacy_en = spacy.load('en') # English
 spacy_de = spacy.load('de') # Deutsch
 
 SRC = Field(tokenize = 'spacy', tokenizer_language='en',
-            init_token = '<sos>', pad_token = '<pad>', eos_token = '<eos>', unk_token = '<unk>',
+            init_token = '<sos>', pad_token = '<pad>',
+            eos_token = '<eos>', unk_token = '<unk>',
             lower=True, batch_first=True) 
 
 TRG = Field(tokenize = 'spacy', tokenizer_language='de',
-            init_token = '<sos>', pad_token = '<pad>', eos_token = '<eos>', unk_token = '<unk>',
+            init_token = '<sos>', pad_token = '<pad>',
+            eos_token = '<eos>', unk_token = '<unk>',
             lower=True, batch_first=True) 
 
 train_dataset, valid_dataset, test_dataset = Multi30k.splits(exts=(".de", ".en"), fields=(SRC, TRG), root='data')
@@ -40,11 +42,16 @@ train_iterator, valid_iterator, test_iterator = BucketIterator.splits(
 
 SRC_PAD_IDX = SRC.vocab.stoi[SRC.pad_token]
 TRG_PAD_IDX = TRG.vocab.stoi[TRG.pad_token]
-print(SRC.pad_token)
-print(SRC_PAD_IDX)
+
+src_vocab_len = len(SRC.vocab)
+trg_vocab_len = len(TRG.vocab)
+
 # Transformer
 model = Transformer(num_encoder_layer=6, num_decoder_layer=6,
-                          d_model=512, num_heads=8, d_ff=2048, vocab_size=10000)
+                 d_model=512, num_heads=8, d_ff=2048, dropout_rate=0.1, 
+                 src_pad_idx=SRC_PAD_IDX, trg_pad_idx=TRG_PAD_IDX,
+                 src_vocab_size=src_vocab_len, trg_vocab_size=trg_vocab_len,
+                 max_seq_len=100).to(device)
 
 # Adam optimizer로 학습 최적화
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
@@ -66,7 +73,7 @@ def train(model, iterator, optimizer, criterion, clip):
 
         # 출력 단어의 마지막 인덱스(<eos>)는 제외
         # 입력을 할 때는 <sos>부터 시작하도록 처리
-        output, _ = model(src, trg[:,:-1])
+        output = model(src, trg[:,:-1])
 
         # output: [배치 크기, trg_len - 1, output_dim]
         # trg: [배치 크기, trg_len]
@@ -108,7 +115,7 @@ def evaluate(model, iterator, criterion):
 
             # 출력 단어의 마지막 인덱스(<eos>)는 제외
             # 입력을 할 때는 <sos>부터 시작하도록 처리
-            output, _ = model(src, trg[:,:-1])
+            output = model(src, trg[:,:-1])
 
             # output: [배치 크기, trg_len - 1, output_dim]
             # trg: [배치 크기, trg_len]
