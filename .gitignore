@@ -1,3 +1,7 @@
 reference
 *.ipynb
 __pycache__
+reference.py
+translator_eval.py
+translator_test.py
+translator_train.py

@@ -3,8 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-
-import numpy as np
 import math
 
 # Torch
@@ -30,9 +28,10 @@ class Transformer(nn.Module):
     
     def forward(self, src, trg):
         # Get masks
-        src_mask = padding_mask(src, self.src_pad_idx)
-        trg_mask = look_ahead_mask(trg, self.trg_pad_idx)
-        
+        src_mask = self.padding_mask(src)
+        trg_mask = self.look_ahead_mask(trg)
+        print(src, src_mask)
+        print(trg, trg_mask)
         # Encoder and decoder
         encoder_out = self.encoder(src, src_mask)
         decoder_out = self.decoder(trg, trg_mask, encoder_out, src_mask)
@@ -42,6 +41,38 @@ class Transformer(nn.Module):
         out = F.log_softmax(out, dim=-1)
         
         return out
+    
+    # Set the look ahead mask
+    # seq: (batch, seq_len)
+    # mask: (batch, 1, seq_len, seq_len)
+    # Pad -> True
+    def look_ahead_mask(self, seq):
+        # Set the look ahead mask
+        # (batch, seq_len, seq_len)
+        seq_len = seq.shape[1]
+        mask = torch.ones(seq_len, seq_len)
+        mask = torch.tril(mask)
+        mask = mask.bool()
+
+        # Set the padding mask
+        # (batch, 1, 1, seq_len)
+        pad_mask = (seq != self.trg_pad_idx)
+        pad_mask = pad_mask.unsqueeze(1).unsqueeze(2)
+        
+        # Merge the masks
+        mask = mask & pad_mask
+
+        return mask
+
+    # Set the padding mask
+    # seq: (batch, seq_len)
+    # mask: (batch, 1, 1, seq_len)
+    # Pad -> True
+    def padding_mask(self, seq):
+        mask = (seq != self.src_pad_idx)
+        mask = mask.unsqueeze(1).unsqueeze(2)
+        
+        return mask
 
 # Encoder
 class Encoder(nn.Module):
@@ -167,7 +198,7 @@ class MultiHeadAttention(nn.Module):
         query = self.weight_q(query)
         key = self.weight_k(key)
         value = self.weight_v(value)
-        
+
         # (batch, seq_len, d_model) -> (batch, seq_len, h, d_k)
         query = query.view(batch_size, -1, self.num_heads, self.d_k)
         key = key.view(batch_size, -1, self.num_heads, self.d_k)
@@ -180,7 +211,7 @@ class MultiHeadAttention(nn.Module):
         
         # Get the scaled attention
         # (batch, h, query_len, d_k) -> (batch, query_len, h, d_k)
-        scaled_attention = scaled_dot_product_attention(query, key, value, mask)
+        scaled_attention = self.scaled_dot_product_attention(query, key, value, mask)
         scaled_attention = torch.transpose(scaled_attention, 1, 2)
 
         # Concat the splitted attentions
@@ -193,6 +224,29 @@ class MultiHeadAttention(nn.Module):
         
         return multihead_attention
     
+    # Query, key, and value size: (batch, num_heads, seq_len, d_k)
+    # Mask size(optional): (batch, 1, seq_len, seq_len)   
+    def scaled_dot_product_attention(self, query, key, value, mask):
+        # Get the q matmul k_t
+        # (batch, h, query_len, d_k) dot (batch, h, d_k, key_len)
+        # -> (batch, h, query_len, key_len)
+        attention_score = torch.matmul(query, torch.transpose(key, -2, -1))
+
+        # Get the attention score
+        d_k = query.size(-1)
+        attention_score = attention_score / math.sqrt(d_k)
+
+        # Get the attention wights
+        attention_score = attention_score.masked_fill(mask==0, -1e10) if mask is not None else attention_score
+        attention_weights = F.softmax(attention_score, dim=-1, dtype=torch.float)
+
+        # Get the attention value
+        # (batch, h, query_len, key_len) -> (batch, h, query_len, d_k)
+        attention_value = torch.matmul(attention_weights, value)
+        
+        return attention_value
+
+# Position wise feed forward
 class PositionWiseFeedForward(nn.Module):
     def __init__(self, d_model, d_ff):
         super(PositionWiseFeedForward, self).__init__()
@@ -205,60 +259,6 @@ class PositionWiseFeedForward(nn.Module):
         out = self.fc2(out)
         
         return out
-    
-# Query, key, and value size: (batch, num_heads, seq_len, d_k)
-# Mask size(optional): (batch, 1, seq_len, seq_len)   
-def scaled_dot_product_attention(query, key, value, mask):
-    # Get the q matmul k_t
-    # (batch, h, query_len, d_k) dot (batch, h, d_k, key_len)
-    # -> (batch, h, query_len, key_len)
-    attention_score = torch.matmul(query, torch.transpose(key, -2, -1))
-    
-    # Get the attention score
-    d_k = query.size(-1)
-    attention_score = attention_score / math.sqrt(d_k)
-    
-    # Get the attention wights
-    attention_score = attention_score.masked_fill(mask==0, -1e10) if mask is not None else attention_score
-    attention_weights = F.softmax(attention_score, dim=-1, dtype=torch.float)
-
-    # Get the attention value
-    # (batch, h, query_len, key_len) -> (batch, h, query_len, d_k)
-    attention_value = torch.matmul(attention_weights, value)
-    
-    return attention_value
-
-# Set the look ahead mask
-# seq: (batch, seq_len)
-# mask: (batch, 1, seq_len, seq_len)
-# Pad -> True
-def look_ahead_mask(seq, pad):
-    # Set the look ahead mask
-    # (batch, seq_len, seq_len)
-    seq_len = seq.shape[1]
-    mask = torch.ones(seq_len, seq_len)
-    mask = torch.tril(mask)
-    mask = mask.bool()
-
-    # Set the padding mask
-    # (batch, 1, 1, seq_len)
-    pad_mask = (seq != pad)
-    pad_mask = pad_mask.unsqueeze(1).unsqueeze(2)
-    
-    # Merge the masks
-    mask = mask & pad_mask
-
-    return mask
-
-# Set the padding mask
-# seq: (batch, seq_len)
-# mask: (batch, 1, 1, seq_len)
-# Pad -> True
-def padding_mask(seq, pad):
-    mask = (seq != pad)
-    mask = mask.unsqueeze(1).unsqueeze(2)
-    
-    return mask
 
 # Token embedding
 class TokenEmbedding(nn.Module):
@@ -297,3 +297,4 @@ class PositionalEncoding(nn.Module):
         out = self.dropout(out)
         
         return out  
+    
