@@ -30,8 +30,7 @@ class Transformer(nn.Module):
         # Get masks
         src_mask = self.padding_mask(src)
         trg_mask = self.look_ahead_mask(trg)
-        print(src, src_mask)
-        print(trg, trg_mask)
+
         # Encoder and decoder
         encoder_out = self.encoder(src, src_mask)
         decoder_out = self.decoder(trg, trg_mask, encoder_out, src_mask)
@@ -79,16 +78,24 @@ class Encoder(nn.Module):
     def __init__(self, num_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size):
         super(Encoder, self).__init__()
         # Embedding
-        token_embedding = TokenEmbedding(d_model, vocab_size)
-        position_embedding = PositionalEncoding(d_model, max_seq_len)
-        self.src_embedding = nn.Sequential(token_embedding, position_embedding)
+        # token_embedding = TokenEmbedding(d_model, vocab_size)
+        # position_embedding = PositionalEncoding(d_model, max_seq_len)
+        # self.src_embedding = nn.Sequential(token_embedding, position_embedding)
+        self.tok_embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_embedding = nn.Embedding(max_seq_len, d_model)
+        self.scale = torch.sqrt(torch.FloatTensor([d_model])).to(device)
+        self.dropout = nn.Dropout(dropout_rate)
         
         # Encoder layers
         self.layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout_rate) for _ in range(num_layer)])
         
     def forward(self, src, src_mask):
         # Embedding
-        emb_src = self.src_embedding(src)
+        # emb_src = self.src_embedding(src)
+        batch_size = src.shape[0]
+        src_len = src.shape[1]
+        pos = torch.arange(0, src_len).unsqueeze(0).repeat(batch_size, 1).to(device)
+        emb_src = self.dropout((self.tok_embedding(src) * self.scale) + self.pos_embedding(pos))
         
         # Encoder layers
         for layer in self.layers:
@@ -126,16 +133,24 @@ class Decoder(nn.Module):
     def __init__(self, num_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size):
         super(Decoder, self).__init__()
         # Embedding
-        token_embedding = TokenEmbedding(d_model, vocab_size)
-        position_embedding = PositionalEncoding(d_model, max_seq_len)
-        self.trg_embedding = nn.Sequential(token_embedding, position_embedding)
+        # token_embedding = TokenEmbedding(d_model, vocab_size)
+        # position_embedding = PositionalEncoding(d_model, max_seq_len)
+        # self.trg_embedding = nn.Sequential(token_embedding, position_embedding)
+        self.tok_embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_embedding = nn.Embedding(max_seq_len, d_model)
+        self.scale = torch.sqrt(torch.FloatTensor([d_model])).to(device)
+        self.dropout = nn.Dropout(dropout_rate)
         
         # Decoder layers
         self.layers = nn.ModuleList([DecoderLayer(d_model, num_heads, d_ff, dropout_rate) for _ in range(num_layer)]) 
         
     def forward(self, trg, trg_mask, encoder_src, src_mask):
         # Embedding
-        emb_trg = self.trg_embedding(trg)
+        # emb_trg = self.trg_embedding(trg)
+        batch_size = trg.shape[0]
+        trg_len = trg.shape[1]
+        pos = torch.arange(0, trg_len).unsqueeze(0).repeat(batch_size, 1).to(device)
+        emb_trg = self.dropout((self.tok_embedding(trg) * self.scale) + self.pos_embedding(pos))
         
         # Encoder layers
         for layer in self.layers:
