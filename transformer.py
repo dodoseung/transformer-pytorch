@@ -101,13 +101,13 @@ class Encoder(nn.Module):
 
     def forward(self, src, src_mask):
         # Embedding
-        emb_src = self.src_embedding(src)
+        x = self.src_embedding(src)
 
         # Encoder layers
         for layer in self.layers:
-            out = layer(emb_src, src_mask)
+            x = layer(x, src_mask)
             
-        return out
+        return x
 
 # Encoder layer
 class EncoderLayer(nn.Module):
@@ -152,13 +152,13 @@ class Decoder(nn.Module):
 
     def forward(self, trg, trg_mask, encoder_src, src_mask):
         # Embedding
-        emb_trg = self.trg_embedding(trg)
+        x = self.trg_embedding(trg)
 
         # Encoder layers
         for layer in self.layers:
-            out = layer(emb_trg, trg_mask, encoder_src, src_mask)
+            x = layer(x, trg_mask, encoder_src, src_mask)
             
-        return out
+        return x
 
 # Decoder layer
 class DecoderLayer(nn.Module):

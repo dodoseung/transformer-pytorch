@@ -109,7 +109,7 @@ def translate_sentence(sentence, src_field, trg_field, model, device, max_len=50
     model.eval()
 
     # Set the de source
-    tokens = [token.text.lower() for token in spacy_de(sentence)]
+    tokens = [token.text.lower() for token in spacy_de(sentence)] if isinstance(sentence, str) else [token.lower() for token in sentence]
     tokens = [src_field.init_token] + tokens + [src_field.eos_token]
     src_indexes = [src_field.vocab.stoi[token] for token in tokens]
     src_tensor = torch.LongTensor(src_indexes).unsqueeze(0).to(device)
