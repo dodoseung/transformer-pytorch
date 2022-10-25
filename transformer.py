@@ -5,23 +5,23 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import math
 
-# Torch
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 # Transformer
 class Transformer(nn.Module):
     def __init__(self, num_encoder_layer=6, num_decoder_layer=6,
                  d_model=512, num_heads=8, d_ff=2048, dropout_rate=0.1, 
                  src_pad_idx=0, trg_pad_idx=0, src_vocab_size=10000, trg_vocab_size=10000,
-                 max_seq_len=100):
+                 max_seq_len=100, device="cpu"):
         super(Transformer, self).__init__()
+        # Device
+        self.device = device
+
         # Token masks
         self.src_pad_idx = src_pad_idx
         self.trg_pad_idx = trg_pad_idx
         
         # Encoder and decoder
-        self.encoder = Encoder(num_encoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, src_vocab_size)
-        self.decoder = Decoder(num_decoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, trg_vocab_size)
+        self.encoder = Encoder(num_encoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, src_vocab_size, self.device)
+        self.decoder = Decoder(num_decoder_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, trg_vocab_size, self.device)
         
         # Output layer
         self.out_layer = nn.Linear(d_model, trg_vocab_size)
@@ -37,7 +37,6 @@ class Transformer(nn.Module):
         
         # Transform to character
         out = self.out_layer(decoder_out)
-        out = F.log_softmax(out, dim=-1)
         
         return out
     
@@ -51,7 +50,7 @@ class Transformer(nn.Module):
         seq_len = seq.shape[1]
         mask = torch.ones(seq_len, seq_len)
         mask = torch.tril(mask)
-        mask = mask.bool()
+        mask = mask.bool().to(self.device)
 
         # Set the padding mask
         # (batch, 1, 1, seq_len)
@@ -73,30 +72,37 @@ class Transformer(nn.Module):
         
         return mask
 
+    # Decoder with the lasf fc layer
+    # Prediction
+    def predict(self, trg, trg_mask, encoder_src, src_mask):
+        # Decoder
+        decoder_out = self.decoder(trg, trg_mask, encoder_src, src_mask)
+        
+        # Transform to character
+        out = self.out_layer(decoder_out)
+
+        return out
+
 # Encoder
 class Encoder(nn.Module):
-    def __init__(self, num_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size):
+    def __init__(self, num_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size, device):
         super(Encoder, self).__init__()
+        # Device
+        self.device = device
+
         # Embedding
-        # token_embedding = TokenEmbedding(d_model, vocab_size)
-        # position_embedding = PositionalEncoding(d_model, max_seq_len)
-        # self.src_embedding = nn.Sequential(token_embedding, position_embedding)
-        self.tok_embedding = nn.Embedding(vocab_size, d_model)
-        self.pos_embedding = nn.Embedding(max_seq_len, d_model)
-        self.scale = torch.sqrt(torch.FloatTensor([d_model])).to(device)
+        token_embedding = TokenEmbedding(d_model, vocab_size)
+        position_embedding = PositionalEncoding(d_model, max_seq_len, self.device)
+        self.src_embedding = nn.Sequential(token_embedding, position_embedding)
         self.dropout = nn.Dropout(dropout_rate)
         
         # Encoder layers
         self.layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout_rate) for _ in range(num_layer)])
-        
+
     def forward(self, src, src_mask):
         # Embedding
-        # emb_src = self.src_embedding(src)
-        batch_size = src.shape[0]
-        src_len = src.shape[1]
-        pos = torch.arange(0, src_len).unsqueeze(0).repeat(batch_size, 1).to(device)
-        emb_src = self.dropout((self.tok_embedding(src) * self.scale) + self.pos_embedding(pos))
-        
+        emb_src = self.src_embedding(src)
+
         # Encoder layers
         for layer in self.layers:
             out = layer(emb_src, src_mask)
@@ -111,8 +117,8 @@ class EncoderLayer(nn.Module):
         self.position_wise_feed_forward = PositionWiseFeedForward(d_model=d_model, d_ff=d_ff)
         
         self.dropout = nn.Dropout(p=dropout_ratio)
-        self.layer_norm1 = nn.LayerNorm(d_model, eps=1e-6)
-        self.layer_norm2 = nn.LayerNorm(d_model, eps=1e-6)
+        self.layer_norm1 = nn.LayerNorm(d_model, eps=1e-5)
+        self.layer_norm2 = nn.LayerNorm(d_model, eps=1e-5)
 
     def forward(self, src, src_mask):
         # Multi head attention
@@ -130,28 +136,24 @@ class EncoderLayer(nn.Module):
 
 # Decoder
 class Decoder(nn.Module):
-    def __init__(self, num_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size):
+    def __init__(self, num_layer, d_model, num_heads, d_ff, dropout_rate, max_seq_len, vocab_size, device):
         super(Decoder, self).__init__()
+        # Device
+        self.device = device
+
         # Embedding
-        # token_embedding = TokenEmbedding(d_model, vocab_size)
-        # position_embedding = PositionalEncoding(d_model, max_seq_len)
-        # self.trg_embedding = nn.Sequential(token_embedding, position_embedding)
-        self.tok_embedding = nn.Embedding(vocab_size, d_model)
-        self.pos_embedding = nn.Embedding(max_seq_len, d_model)
-        self.scale = torch.sqrt(torch.FloatTensor([d_model])).to(device)
+        token_embedding = TokenEmbedding(d_model, vocab_size)
+        position_embedding = PositionalEncoding(d_model, max_seq_len, self.device)
+        self.trg_embedding = nn.Sequential(token_embedding, position_embedding)
         self.dropout = nn.Dropout(dropout_rate)
         
         # Decoder layers
         self.layers = nn.ModuleList([DecoderLayer(d_model, num_heads, d_ff, dropout_rate) for _ in range(num_layer)]) 
-        
+
     def forward(self, trg, trg_mask, encoder_src, src_mask):
         # Embedding
-        # emb_trg = self.trg_embedding(trg)
-        batch_size = trg.shape[0]
-        trg_len = trg.shape[1]
-        pos = torch.arange(0, trg_len).unsqueeze(0).repeat(batch_size, 1).to(device)
-        emb_trg = self.dropout((self.tok_embedding(trg) * self.scale) + self.pos_embedding(pos))
-        
+        emb_trg = self.trg_embedding(trg)
+
         # Encoder layers
         for layer in self.layers:
             out = layer(emb_trg, trg_mask, encoder_src, src_mask)
@@ -167,9 +169,9 @@ class DecoderLayer(nn.Module):
         self.position_wise_feed_forward = PositionWiseFeedForward(d_model=d_model, d_ff=d_ff)
         
         self.dropout = nn.Dropout(p=dropout_rate)
-        self.layer_norm1 = nn.LayerNorm(d_model, eps=1e-6)
-        self.layer_norm2 = nn.LayerNorm(d_model, eps=1e-6)
-        self.layer_norm3 = nn.LayerNorm(d_model, eps=1e-6)
+        self.layer_norm1 = nn.LayerNorm(d_model, eps=1e-5)
+        self.layer_norm2 = nn.LayerNorm(d_model, eps=1e-5)
+        self.layer_norm3 = nn.LayerNorm(d_model, eps=1e-5)
 
     def forward(self, trg, trg_mask, encoder_src, src_mask):
         # Masked multi head attention
@@ -227,11 +229,11 @@ class MultiHeadAttention(nn.Module):
         # Get the scaled attention
         # (batch, h, query_len, d_k) -> (batch, query_len, h, d_k)
         scaled_attention = self.scaled_dot_product_attention(query, key, value, mask)
-        scaled_attention = torch.transpose(scaled_attention, 1, 2)
+        scaled_attention = torch.transpose(scaled_attention, 1, 2).contiguous()
 
         # Concat the splitted attentions
         # (batch, query_len, h, d_k) -> (batch, query_len, d_model)
-        concat_attention = torch.reshape(scaled_attention, (batch_size, -1, self.d_model))
+        concat_attention = scaled_attention.view(batch_size, -1, self.d_model)
         
         # Get the multi head attention
         # (batch, query_len, d_model) -> (batch, query_len, d_model)
@@ -288,12 +290,14 @@ class TokenEmbedding(nn.Module):
 
 # Positional encoding
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model=512, max_seq_len=100):
+    def __init__(self, d_model=512, max_seq_len=100, device="cpu"):
         super(PositionalEncoding, self).__init__()
+        # Device
+        self.device = device
 
         # Get the radians
-        pos = torch.range(0, max_seq_len - 1).to(device).view(-1, 1)
-        i = torch.range(0, d_model - 1).to(device)
+        pos = torch.range(0, max_seq_len - 1).to(self.device).view(-1, 1)
+        i = torch.range(0, d_model - 1).to(self.device)
         rads = pos / torch.pow(10000, (2 * (i // 2) / d_model))
 
         # Get the positional encoding value from sinusoidal functions
@@ -303,12 +307,12 @@ class PositionalEncoding(nn.Module):
         
         self.pe = pe.unsqueeze(0)
         self.dropout = nn.Dropout(p=0.1)
-        
+
     def forward(self, x):
         seq_len = x.size(1)
         pos_enc = self.pe[:, :seq_len]
         
-        out = x + Variable(pos_enc, requires_grad=False).to(device)
+        out = x + Variable(pos_enc, requires_grad=False).to(self.device)
         out = self.dropout(out)
         
         return out  

@@ -6,3 +6,5 @@ translator_eval.py
 translator_test.py
 translator_train.py
 *.pt
+data
+.data
